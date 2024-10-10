@@ -1,0 +1,159 @@
+body,
+html {
+  height: 100%;
+  margin: 0;
+  overflow-y: auto;
+}
+
+.chat {
+  display: inline-grid;
+  width: 100%;
+  gap: 12px;
+}
+
+.chat:last-child {
+  padding-bottom: 30px;
+}
+
+.chat-container {
+  padding-top: 50px;
+  display: flow-root;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 90vh;
+  /* overflow-y: auto; */
+  /* height: 90vh; */
+}
+
+.text-box {
+  flex-grow: 1;
+}
+
+.container-buttons {
+  display: inline-flex;
+  gap: 12px;
+  place-content: end;
+}
+
+.input-message {
+  position: -webkit-sticky;
+  position: sticky;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100px;
+  bottom: 5%;
+  border-radius: 36px !important;
+}
+
+.input-message input,
+.input-message input:focus {
+  font-size: 21px;
+  border: 0px;
+  box-shadow: none;
+}
+
+.input-buttons {
+  width: max-content !important;
+  gap: 12px;
+}
+
+.input-buttons .send-button {
+  background-color: #4caf50;
+  color: #fefefe;
+  font-size: 18px;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  opacity: 0.8;
+  border-radius: 36px;
+}
+
+.input-buttons .send-button:disabled {
+  background-color: #99a2ab;
+}
+
+.input-buttons .stop-button {
+  background-color: red;
+  color: #fefefe;
+  font-size: 24px;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  opacity: 0.8;
+  border-radius: 36px;
+}
+
+/* .input-buttons .stop-button:hover {
+  background-color: red;
+  color: #fefefe;
+} */
+
+.bubble {
+  max-width: 75%;
+  padding: 1em;
+  border-inline: 1.5em solid #0000;
+  border-radius: 36px;
+  color: #fff;
+}
+
+.left {
+  place-self: start;
+  background-color: #333333;
+}
+
+.left h1 {
+  font-size: 36px;
+}
+
+.left h2 {
+  font-size: 30px;
+}
+
+.left h3 {
+  font-size: 24px;
+}
+
+.left h4 {
+  font-size: 20px;
+}
+
+.left h5 {
+  font-size: 18px;
+}
+
+.left p,
+.left ul,
+.left li,
+.right {
+  font-size: 18px;
+}
+
+.left a {
+  color: #599cdb;
+  text-decoration: underline;
+}
+
+.right {
+  place-self: end;
+  background-color: #4caf50;
+}
+
+.loader {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #4caf50;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
