@@ -1,4 +1,0 @@
-pip install openai
-pip install fastapi
-pip install uvicorn
-#  in the same directory, paste in the terminal: uvicorn main:app --reload
