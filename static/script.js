@@ -40,11 +40,12 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("sendMessage").disabled = true;
 
     // Prepare request body
-    const requestBody = { threadId: threadId || "initial_thread", message: message }; // Set threadId to a valid value
+    const requestBody = { threadId: threadId || "initial_thread", message: message };
 
     console.log("Sending request with:", requestBody);  // Log the request body
 
-    fetch("/chat", {
+    // Make sure the fetch is using "/chat_with_file"
+    fetch("/chat_with_file", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -75,7 +76,8 @@ function runAssistant(threadId, message) {
   chat.appendChild(loaderDiv);
   sendMessageButton.disabled = true;
 
-  fetch("/chat", {
+  // Make sure the fetch is using "/chat_with_file"
+  fetch("/chat_with_file", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -87,8 +89,12 @@ function runAssistant(threadId, message) {
       console.log(data);
       var converter = new showdown.Converter();
       converter.addExtension(linkTargetBlankExtension);
-      const botReplyHtml = converter.makeHtml(data.bot_reply); // Convert bot reply to HTML
-      loaderDiv.innerHTML = botReplyHtml; // Replace loader with actual data
+      
+      // Use Markdown format for a more appealing reply
+      const botReplyHtml = converter.makeHtml(data.bot_reply);
+
+      // Display formatted HTML
+      loaderDiv.innerHTML = botReplyHtml;
     })
     .catch((error) => {
       console.error("There has been a problem with your fetch operation:", error);
@@ -100,7 +106,7 @@ function continueChat(message) {
   var chat = document.getElementById("chat");
   chat.innerHTML += `<div class="bubble right">${message}</div>`;
 
-  fetch("/chat", {
+  fetch("/chat_with_file", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

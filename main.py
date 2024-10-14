@@ -10,14 +10,28 @@ import spacy
 import re
 import docx  # Library to handle .docx files
 import numpy as np
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)
 
 # Set your OpenAI API key
 openai.api_key = ''
 
 # Set your Google API key
-GOOGLE_API_KEY = ''
+GOOGLE_API_KEY = ''  
+
+# Set your Halaltrip API credentials
+HALALTRIP_API_KEY = ''  
+HALALTRIP_TOKEN = '' 
 
 # Load the NLP model for English
 nlp = spacy.load("en_core_web_sm")
@@ -66,7 +80,7 @@ def get_timezone(lat, lng):
     logging.error(f"Error fetching timezone for {lat}, {lng}")
     return None
 
-# Helper function to fetch prayer times using Aladhan API
+# Helper function to fetch prayer times using Halaltrip API
 def get_prayer_times(city, country, specific_prayer=None):
     try:
         lat, lng = get_lat_long(city, country)
@@ -79,28 +93,49 @@ def get_prayer_times(city, country, specific_prayer=None):
 
         logging.info(f"Fetching prayer times for city: {city}, country: {country} in timezone {timezone}")
 
-        api_url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country={country}&method=3&timezone={timezone}"
-        response = requests.get(api_url)
+        api_url = f"http://api.halaltrip.com/v1/api/prayertimes/"
+        params = {
+            'lat': lat,
+            'lng': lng,
+            'timeZoneId': timezone
+        }
+        headers = {
+            'APIKEY': HALALTRIP_API_KEY,
+            'TOKEN': HALALTRIP_TOKEN
+        }
+        response = requests.get(api_url, params=params, headers=headers)
 
         if response.status_code == 200:
             data = response.json()
-            timings = data['data']['timings']
+            logging.info(f"Response from Halaltrip API: {data}")
+
+            # Parse the data to get timings
+            prayer_data = data.get('prayer', {})
+            if not prayer_data:
+                return "Could not retrieve prayer times."
+
+            # Get the date key (e.g., '15-10-2024')
+            date_key = next(iter(prayer_data))
+            timings = prayer_data.get(date_key, {})
+            if not timings:
+                return "Could not retrieve prayer times."
 
             if specific_prayer:
                 specific_time = timings.get(specific_prayer.capitalize())
                 logging.info(f"Specific prayer time ({specific_prayer}): {specific_time}")
-                return specific_time or f"{specific_prayer} time not available."
+                return specific_time or f"{specific_prayer.capitalize()} time not available."
             else:
                 formatted_timings = (
-                    f"**🕌 Here are the prayer times for {city}, {country}:**\n\n"
-                    f"**Fajr** ⏰: {timings['Fajr']}\n"
-                    f"**Dhuhr** ⏰: {timings['Dhuhr']}\n"
-                    f"**Asr** ⏰: {timings['Asr']}\n"
-                    f"**Maghrib** ⏰: {timings['Maghrib']}\n"
-                    f"**Isha** ⏰: {timings['Isha']}\n"
+                    f"**🕌 Here are the prayer times for {city}, {country} on {date_key}:**\n\n"
+                    f"**Fajr** ⏰: {timings.get('Fajr', 'N/A')}\n"
+                    f"**Dhuhr** ⏰: {timings.get('Dhuhr', 'N/A')}\n"
+                    f"**Asr** ⏰: {timings.get('Asr', 'N/A')}\n"
+                    f"**Maghrib** ⏰: {timings.get('Maghrib', 'N/A')}\n"
+                    f"**Isha** ⏰: {timings.get('Isha', 'N/A')}\n"
                 )
                 return formatted_timings
         else:
+            logging.error(f"Error fetching prayer times: {response.status_code} - {response.text}")
             return "Sorry, I couldn't fetch the prayer times at the moment."
     except Exception as e:
         logging.error(f"Error fetching prayer times: {e}")
@@ -155,6 +190,7 @@ def create_embeddings_for_docs():
             filepath = os.path.join(folder_path, filename)
             doc_content = read_word_doc(filepath)
             embedding = get_embedding(doc_content)
+            logging.info(f"Created embedding for {filename}")  # Log the embedding creation
             doc_embeddings.append(embedding)
             filenames.append(filepath)
 
@@ -177,11 +213,12 @@ def cosine_similarity(a, b):
 # Function to find the most relevant document using cosine similarity
 def find_most_relevant_doc(query_embedding, doc_embeddings, filenames):
     similarities = []
-    for doc_embedding in doc_embeddings:
+    for idx, doc_embedding in enumerate(doc_embeddings):
         similarity = cosine_similarity(query_embedding, doc_embedding)
         similarities.append(similarity)
-    # Get the index of the most similar document
+        logging.info(f"Similarity with {filenames[idx]}: {similarity}")  # Log similarity scores
     most_similar_idx = np.argmax(similarities)
+    logging.info(f"Most similar document: {filenames[most_similar_idx]} with similarity {similarities[most_similar_idx]}")
     return filenames[most_similar_idx], similarities[most_similar_idx]
 
 # Search through all .docx files in the static/files directory for relevant content using embeddings
@@ -193,23 +230,35 @@ def search_all_docs(query):
     # Find the most relevant document
     most_relevant_filename, similarity = find_most_relevant_doc(query_embedding, doc_embeddings, filenames)
     logging.info(f"Most relevant document: {most_relevant_filename} with similarity {similarity}")
-    # Read content from the most relevant document
-    relevant_content = read_word_doc(most_relevant_filename)
-    return relevant_content
 
-# Endpoint to handle requests and use all .docx files for reference
+    # Set a similarity threshold
+    SIMILARITY_THRESHOLD = 0.87  # Adjust this threshold as needed
+
+    if similarity < SIMILARITY_THRESHOLD:
+        logging.info(f"Similarity {similarity} is below threshold {SIMILARITY_THRESHOLD}. No relevant document found.")
+        return None  # No relevant content found
+    else:
+        # Read content from the most relevant document
+        relevant_content = read_word_doc(most_relevant_filename)
+        return relevant_content
+
 @app.post("/chat_with_file")
 async def chat_with_file(request: ChatMessageRequest):
     query = request.message.strip()
+
+    # Search the document for relevant content
     relevant_content = search_all_docs(query)
 
-    if relevant_content:
-        # Log the messages being sent to the OpenAI API
+    if relevant_content and relevant_content.strip():  # Ensure relevant_content is not empty
+        # If document content is found, log and use it
+        logging.info(f"Information retrieved from document: {relevant_content}")
+
+        # Send the document content along with the query to OpenAI to craft a response
         messages = [
             {
                 "role": "system",
                 "content": """
-You are Farah, a helpful assistant for Muslim travelers on a Muslim-friendly website (Halaltrip.com). Use the provided document as a reference for your response. Cite information directly from the document, and mention that it comes from the provided content. Do not include any information that is not in the document. Use the provided document to answer the user's question as accurately as possible.
+You are Farah, a helpful assistant for Muslim travelers on a Muslim-friendly website (Halaltrip.com). Use the provided document as a reference for your response. Cite information directly from the document, and mention that it comes from the provided content. Do not include any information that is not in the document. Use the provided document to answer the user's question as accurately as possible. Answer in a concise manner, well formatted, and make it look appealing. Feel free to use emojis.
 """
             },
             {
@@ -224,17 +273,22 @@ You are Farah, a helpful assistant for Muslim travelers on a Muslim-friendly web
 
         logging.info(f"Messages sent to OpenAI API: {messages}")
 
+        # Get a response from OpenAI based on the document
         response = openai.ChatCompletion.create(
-            model="gpt-4o",
+            model="gpt-4",
             messages=messages
         )
         bot_reply = response['choices'][0]['message']['content']
-    else:
-        # Handle case where no relevant content is found
-        bot_reply = "I'm sorry, I couldn't find any information related to your question in the provided documents."
+        logging.info("Response generated using document content.")
+        return {"bot_reply": bot_reply, "threadId": request.threadId}
 
-    logging.info(f"Bot reply: {bot_reply}")
-    return {"bot_reply": bot_reply, "threadId": request.threadId}
+    else:
+        # No relevant content found in documents, log it and trigger fallback to /chat
+        logging.info("No relevant information found in documents. Falling back to /chat.")
+
+        # Explicitly call the /chat logic
+        response = await chat(request)  # Call the /chat logic
+        return response  # Return the general /chat response
 
 # Default chat endpoint
 @app.post("/chat")
@@ -261,14 +315,17 @@ async def chat(request: ChatMessageRequest):
                         break
 
                 prayer_times = get_prayer_times(city, country, specific_prayer)
-                bot_reply = f"Here are the prayer times for {city}, {country}:\n\n{prayer_times}"
+                if specific_prayer:
+                    bot_reply = f"The time for **{specific_prayer.capitalize()}** prayer in {city}, {country} is:\n\n{prayer_times}"
+                else:
+                    bot_reply = prayer_times  # `get_prayer_times` already returns formatted timings
             else:
                 bot_reply = "Sorry, I couldn't detect a valid city and country from your message."
         else:
             bot_reply = "Please specify the city and country for which you want the prayer times. For example, you can ask: 'What are the prayer times in Mumbai, India today?'"
     else:
         response = openai.ChatCompletion.create(
-            model="gpt-4o",
+            model="gpt-4",
             messages=[
                 {
                     "role": "system",
