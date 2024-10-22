@@ -31,7 +31,12 @@ GOOGLE_API_KEY = ''
 
 # Set your Halaltrip API credentials
 HALALTRIP_API_KEY = ''  
-HALALTRIP_TOKEN = '' 
+HALALTRIP_API_SECRET = '' 
+HALALTRIP_TOKEN = ''
+
+# # Generate TOKEN if not already generated
+# import hashlib
+# HALALTRIP_TOKEN = hashlib.md5((HALALTRIP_API_KEY + HALALTRIP_API_SECRET).encode('utf-8')).hexdigest()
 
 # Load the NLP model for English
 nlp = spacy.load("en_core_web_sm")
@@ -141,6 +146,91 @@ def get_prayer_times(city, country, specific_prayer=None):
         logging.error(f"Error fetching prayer times: {e}")
         return f"Error fetching prayer times: {e}"
 
+# Helper function to fetch restaurants using Halaltrip API
+def get_restaurants(city, country, cuisine=None):
+    try:
+        logging.info(f"Fetching restaurants for city: {city}, country: {country}, cuisine: {cuisine}")
+
+        api_url = f"http://api.halaltrip.com/v1/api/restaurants"
+        headers = {
+            'APIKEY': HALALTRIP_API_KEY,
+            'TOKEN': HALALTRIP_TOKEN
+        }
+
+        all_restaurants = []
+        page = 1
+        max_pages = 5  # Adjust as needed
+        while page <= max_pages:
+            params = {'page': page}
+            response = requests.get(api_url, params=params, headers=headers)
+            if response.status_code == 200:
+                data = response.json()
+                restaurants = data.get('data', [])
+                if not restaurants:
+                    break  # No more restaurants
+                all_restaurants.extend(restaurants)
+                page += 1
+            else:
+                logging.error(f"Error fetching restaurants: {response.status_code} - {response.text}")
+                return "Sorry, I couldn't fetch the list of restaurants at the moment."
+
+        # Now filter restaurants by city and cuisine
+        matched_restaurants = []
+        for restaurant in all_restaurants:
+            # Safely get the city information
+            city_info = restaurant.get('city')
+            if city_info and isinstance(city_info, dict):
+                restaurant_city = city_info.get('name', '').strip().lower()
+            else:
+                restaurant_city = ''
+
+            # Safely get the country information
+            country_info = restaurant.get('country')
+            if country_info and isinstance(country_info, dict):
+                restaurant_country = country_info.get('name', '').strip().lower()
+            else:
+                restaurant_country = ''
+
+            # Safely get the cuisine information
+            restaurant_cuisine = restaurant.get('cuisine', '')
+            if restaurant_cuisine:
+                restaurant_cuisine = restaurant_cuisine.strip().lower()
+            else:
+                restaurant_cuisine = ''
+
+            logging.debug(f"Comparing restaurant city '{restaurant_city}' with '{city.lower()}' and country '{restaurant_country}' with '{country.lower()}'")
+
+            if restaurant_city == city.lower() and restaurant_country == country.lower():
+                if cuisine:
+                    if cuisine.lower() in restaurant_cuisine:
+                        matched_restaurants.append(restaurant)
+                else:
+                    matched_restaurants.append(restaurant)
+
+        if not matched_restaurants:
+            if cuisine:
+                return f"No halal {cuisine} restaurants found in {city}, {country}."
+            else:
+                return f"No halal restaurants found in {city}, {country}."
+
+        # Format the response
+        response_text = f"**🍽️ Here are some halal restaurants in {city}, {country}"
+        if cuisine:
+            response_text += f" serving {cuisine} cuisine"
+        response_text += ":**\n\n"
+
+        for i, restaurant in enumerate(matched_restaurants[:5]):  # Show top 5 restaurants
+            name = restaurant.get('restaurantname', 'N/A').strip()
+            address = restaurant.get('address', 'N/A').strip()
+            restaurant_cuisine = restaurant.get('cuisine', 'N/A').strip()
+            response_text += f"{i+1}. **{name}**\n   📍 Address: {address}\n   🍴 Cuisine: {restaurant_cuisine}\n\n"
+        return response_text
+    except Exception as e:
+        logging.error(f"Error fetching restaurants: {e}")
+        return f"Error fetching restaurants: {e}"
+
+
+
 # Function to extract locations using spaCy
 def extract_location(message):
     doc = nlp(message)
@@ -232,7 +322,7 @@ def search_all_docs(query):
     logging.info(f"Most relevant document: {most_relevant_filename} with similarity {similarity}")
 
     # Set a similarity threshold
-    SIMILARITY_THRESHOLD = 0.87  # Adjust this threshold as needed
+    SIMILARITY_THRESHOLD = 0.84  # Adjust this threshold as needed
 
     if similarity < SIMILARITY_THRESHOLD:
         logging.info(f"Similarity {similarity} is below threshold {SIMILARITY_THRESHOLD}. No relevant document found.")
@@ -297,9 +387,28 @@ async def chat(request: ChatMessageRequest):
 
     logging.info(f"Received message: {request.message} with threadId: {request.threadId}")
 
+    # Patterns to detect the intent
+    restaurant_pattern = re.compile(r'\b(restaurant|restaurants|food|eat)\b', re.IGNORECASE)
     prayer_time_pattern = re.compile(r'\bprayer\s*time(?:s)?\b', re.IGNORECASE)
 
-    if prayer_time_pattern.search(request.message.lower()) or any(prayer in request.message.lower() for prayer in specific_prayers):
+    if restaurant_pattern.search(request.message.lower()):
+        # Handle restaurant queries
+        locations = extract_location(request.message)
+        logging.info(f"Extracted locations: {locations}")
+
+        if locations:
+            city, country = detect_city_country(locations)
+            logging.info(f"Detected city: {city}, country: {country}")
+
+            if city and country:
+                restaurants_info = get_restaurants(city, country)
+                bot_reply = restaurants_info
+            else:
+                bot_reply = "Sorry, I couldn't detect a valid city and country from your message."
+        else:
+            bot_reply = "Please specify the city and country for which you want the list of restaurants. For example, you can ask: 'What are some halal restaurants in Singapore?'"
+
+    elif prayer_time_pattern.search(request.message.lower()) or any(prayer in request.message.lower() for prayer in specific_prayers):
         locations = extract_location(request.message)
         logging.info(f"Extracted locations: {locations}")
 
@@ -323,6 +432,7 @@ async def chat(request: ChatMessageRequest):
                 bot_reply = "Sorry, I couldn't detect a valid city and country from your message."
         else:
             bot_reply = "Please specify the city and country for which you want the prayer times. For example, you can ask: 'What are the prayer times in Mumbai, India today?'"
+
     else:
         response = openai.ChatCompletion.create(
             model="gpt-4",
