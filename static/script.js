@@ -1,6 +1,10 @@
 var interval;
 let threadId = null;
 
+// Variables to store user's location
+let userLatitude = null;
+let userLongitude = null;
+
 var linkTargetBlankExtension = function () {
   return [
     {
@@ -9,6 +13,39 @@ var linkTargetBlankExtension = function () {
       replace: '<a href="$1" target="_blank">',
     },
   ];
+};
+
+// Function to get user's location
+function getUserLocation() {
+  const locationStatus = document.getElementById('locationStatus');
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        userLatitude = position.coords.latitude;
+        userLongitude = position.coords.longitude;
+        console.log(`User's location: Latitude ${userLatitude}, Longitude ${userLongitude}`);
+        if (locationStatus) {
+          locationStatus.textContent = '📍 Location acquired.';
+        }
+      },
+      error => {
+        console.error('Error getting location:', error);
+        if (locationStatus) {
+          locationStatus.textContent = '⚠️ Unable to get location.';
+        }
+      }
+    );
+  } else {
+    console.error('Geolocation is not supported by this browser.');
+    if (locationStatus) {
+      locationStatus.textContent = '⚠️ Geolocation is not supported by your browser.';
+    }
+  }
+}
+
+// Call getUserLocation when the page loads
+window.onload = function() {
+  getUserLocation();
 };
 
 function updateButtonState() {
@@ -39,8 +76,13 @@ document.addEventListener("DOMContentLoaded", function () {
     messageInput.value = "";
     document.getElementById("sendMessage").disabled = true;
 
-    // Prepare request body
-    const requestBody = { threadId: threadId || "initial_thread", message: message };
+    // Prepare request body with location data
+    const requestBody = {
+      threadId: threadId || "initial_thread",
+      message: message,
+      latitude: userLatitude,
+      longitude: userLongitude
+    };
 
     console.log("Sending request with:", requestBody);  // Log the request body
 
@@ -76,13 +118,21 @@ function runAssistant(threadId, message) {
   chat.appendChild(loaderDiv);
   sendMessageButton.disabled = true;
 
+  // Prepare request body with location data
+  const requestBody = {
+    threadId: threadId,
+    message: message,
+    latitude: userLatitude,
+    longitude: userLongitude
+  };
+
   // Make sure the fetch is using "/chat_with_file"
   fetch("/chat_with_file", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ threadId: threadId, message: message }),
+    body: JSON.stringify(requestBody),
   })
     .then((response) => response.json())
     .then((data) => {
@@ -95,10 +145,12 @@ function runAssistant(threadId, message) {
 
       // Display formatted HTML
       loaderDiv.innerHTML = botReplyHtml;
+      sendMessageButton.disabled = false;
     })
     .catch((error) => {
       console.error("There has been a problem with your fetch operation:", error);
       loaderDiv.remove();
+      sendMessageButton.disabled = false;
     });
 }
 
@@ -106,12 +158,20 @@ function continueChat(message) {
   var chat = document.getElementById("chat");
   chat.innerHTML += `<div class="bubble right">${message}</div>`;
 
+  // Prepare request body with location data
+  const requestBody = {
+    threadId: threadId,
+    message: message,
+    latitude: userLatitude,
+    longitude: userLongitude
+  };
+
   fetch("/chat_with_file", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ threadId: threadId, message: message }),
+    body: JSON.stringify(requestBody),
   })
     .then((response) => response.json())
     .then((data) => {
