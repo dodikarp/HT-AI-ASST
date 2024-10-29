@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 from get_prayer_times import get_prayer_times
 from get_restaurants import get_restaurants, get_restaurants_nearby
 from get_mosques import get_mosques
-from helpers import extract_location, detect_city_country
+from get_inflight_prayer_times import get_inflight_prayer_times  # Imported for inflight prayer times
+from helpers import extract_location, detect_city_country, extract_flight_details  # Added extract_flight_details
 from embeddings import search_all_docs
 
 # Load environment variables
@@ -114,6 +115,12 @@ Intent: out_of_scope
 User Message: "Tell me a joke about flying elephants"
 Intent: out_of_scope
 
+User Message: "Can you provide inflight prayer times from SIN to DEL on 28-02-2019?"
+Intent: inflight_prayer_times
+
+User Message: "I need inflight prayer times for my flight from JFK to LHR."
+Intent: inflight_prayer_times
+
 User Message: "{user_message}"
 Intent:"""
 
@@ -150,7 +157,7 @@ async def chat(request: ChatMessageRequest):
 
     try:
         if intent == 'greeting':
-            bot_reply = "👋 Assalamu Alaikum! I'm Farah, your assistant for Muslim-friendly travel. I can help with finding halal restaurants, mosques, and prayer times. How may I assist you today?"
+            bot_reply = "👋 Assalamu Alaikum! I'm Farah, your assistant for Muslim-friendly travel. I can help with finding halal restaurants, mosques, prayer times, and inflight prayer times. How may I assist you today?"
 
         elif intent == 'more_info':
             # Pass the message to GPT-4 for detailed information
@@ -314,9 +321,30 @@ You are Farah, a helpful, friendly, and informative assistant for Muslim travele
             else:
                 bot_reply = "Please specify the area or location for which you want the prayer times."
 
+        elif intent == 'inflight_prayer_times':
+            # Handle inflight prayer times queries
+            logging.info("User is requesting inflight prayer times.")
+            # Extract flight details from the message
+            flight_details = extract_flight_details(message)
+            if flight_details:
+                departureAP = flight_details['departureAP']
+                departureDateTime = flight_details['departureDateTime']
+                arrivalAP = flight_details['arrivalAP']
+                arrivalDateTime = flight_details['arrivalDateTime']
+
+                prayer_times_info = get_inflight_prayer_times(
+                    departureAP=departureAP,
+                    departureDateTime=departureDateTime,
+                    arrivalAP=arrivalAP,
+                    arrivalDateTime=arrivalDateTime
+                )
+                bot_reply = prayer_times_info
+            else:
+                bot_reply = "Please provide your departure airport code, departure date and time, arrival airport code, and arrival date and time in the format:\n\n- Departure Airport Code (IATA):\n- Departure Date and Time (dd-mm-yyyy HH:MM):\n- Arrival Airport Code (IATA):\n- Arrival Date and Time (dd-mm-yyyy HH:MM)"
+
         elif intent == 'out_of_scope':
             # Handle out-of-scope or ridiculous questions
-            bot_reply = "I'm sorry, but I can assist you with information on halal restaurants, mosques, prayer times, and travel-related queries. How may I help you today?"
+            bot_reply = "I'm sorry, but I can assist you with information on halal restaurants, mosques, prayer times, inflight prayer times, and travel-related queries. How may I help you today?"
 
         else:
             # Default response using OpenAI GPT

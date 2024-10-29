@@ -7,6 +7,7 @@ import spacy
 from spacy.matcher import Matcher
 from dotenv import load_dotenv
 import docx  # Library to handle .docx files
+import re
 
 # Load environment variables
 load_dotenv()
@@ -103,3 +104,63 @@ def read_word_doc(filepath):
     for paragraph in doc.paragraphs:
         full_text.append(paragraph.text)
     return "\n".join(full_text)
+
+def extract_flight_details(message):
+    try:
+        # Initialize variables
+        departureAP = None
+        arrivalAP = None
+        departureDateTime = None
+        arrivalDateTime = None
+
+        # Extract IATA codes
+        iata_codes = re.findall(r'\b([A-Z]{3})\b', message)
+        if len(iata_codes) >= 2:
+            departureAP = iata_codes[0].upper()
+            arrivalAP = iata_codes[1].upper()
+        else:
+            logging.info("Could not find sufficient IATA codes in the message.")
+            return None
+
+        # Extract departure date and time
+        departure_match = re.search(r'departing\s+(?:on\s+)?([\d-]+\s+at\s+[\d:]+)', message, re.IGNORECASE)
+        if departure_match:
+            departureDateTime = departure_match.group(1)
+        else:
+            logging.info("Could not find departure date and time in the message.")
+            return None
+
+        # Extract arrival date and time
+        arrival_match = re.search(r'arriving\s+(?:on\s+)?([\d-]+\s+at\s+[\d:]+)', message, re.IGNORECASE)
+        if arrival_match:
+            arrivalDateTime = arrival_match.group(1)
+        else:
+            # If arrival date is not specified, assume same as departure date
+            arrival_time_match = re.search(r'arriving\s+at\s+([\d:]+)', message, re.IGNORECASE)
+            if arrival_time_match:
+                arrivalTime = arrival_time_match.group(1)
+                # Extract departure date to use for arrival date
+                departure_date_match = re.search(r'([\d-]+)\s+at\s+[\d:]+', departureDateTime)
+                if departure_date_match:
+                    arrivalDateTime = f"{departure_date_match.group(1)} at {arrivalTime}"
+                else:
+                    logging.info("Could not extract departure date for arrival date.")
+                    return None
+            else:
+                logging.info("Could not find arrival date and time in the message.")
+                return None
+
+        # Clean up date and time formats if necessary
+        departureDateTime = departureDateTime.replace('on ', '').strip()
+        arrivalDateTime = arrivalDateTime.replace('on ', '').strip()
+
+        return {
+            'departureAP': departureAP,
+            'departureDateTime': departureDateTime,
+            'arrivalAP': arrivalAP,
+            'arrivalDateTime': arrivalDateTime
+        }
+
+    except Exception as e:
+        logging.error(f"Error extracting flight details: {e}")
+        return None
