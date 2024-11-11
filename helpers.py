@@ -27,7 +27,11 @@ def extract_location(message):
         'mosque', 'mosques', 'masjid', 'masjids',
         'restaurant', 'restaurants', 'food', 'eat',
         'prayer', 'prayers', 'time', 'times',
-        'qibla', 'direction', 'halal', 'near', 'in', 'at', 'the', 'list', 'show', 'find', 'display'
+        'qibla', 'direction', 'halal', 'near', 'in', 'at', 'the', 'list', 'show', 'find', 'display',
+        # Add prayer names to the non-location words
+        'fajr', 'dhuhr', 'asr', 'maghrib', 'isha',
+        # Add common misspellings or variations
+        'mahgrib', 'magrib', 'asar', 'dhuhr', 'zuhr', 'fajar', 'eisha', 'isha'
     ]]
 
     # Define the matcher
@@ -71,6 +75,8 @@ def detect_city_country(locations):
 
                 if city and country:
                     return city, country
+        else:
+            logging.error(f"Error fetching geocode data for {loc}")
     return None, None
 
 def get_lat_long(city, country):
@@ -123,7 +129,7 @@ def extract_flight_details(message):
             return None
 
         # Extract departure date and time
-        departure_match = re.search(r'departing\s+(?:on\s+)?([\d-]+\s+at\s+[\d:]+)', message, re.IGNORECASE)
+        departure_match = re.search(r'departing\s+(?:on\s+)?([\d-]+\s+(?:at\s+)?[\d:]+)', message, re.IGNORECASE)
         if departure_match:
             departureDateTime = departure_match.group(1)
         else:
@@ -131,16 +137,16 @@ def extract_flight_details(message):
             return None
 
         # Extract arrival date and time
-        arrival_match = re.search(r'arriving\s+(?:on\s+)?([\d-]+\s+at\s+[\d:]+)', message, re.IGNORECASE)
+        arrival_match = re.search(r'arriving\s+(?:on\s+)?([\d-]+\s+(?:at\s+)?[\d:]+)', message, re.IGNORECASE)
         if arrival_match:
             arrivalDateTime = arrival_match.group(1)
         else:
             # If arrival date is not specified, assume same as departure date
-            arrival_time_match = re.search(r'arriving\s+at\s+([\d:]+)', message, re.IGNORECASE)
+            arrival_time_match = re.search(r'arriving\s+(?:at\s+)?([\d:]+)', message, re.IGNORECASE)
             if arrival_time_match:
                 arrivalTime = arrival_time_match.group(1)
                 # Extract departure date to use for arrival date
-                departure_date_match = re.search(r'([\d-]+)\s+at\s+[\d:]+', departureDateTime)
+                departure_date_match = re.search(r'([\d-]+)\s+(?:at\s+)?[\d:]+', departureDateTime)
                 if departure_date_match:
                     arrivalDateTime = f"{departure_date_match.group(1)} at {arrivalTime}"
                 else:
@@ -164,3 +170,20 @@ def extract_flight_details(message):
     except Exception as e:
         logging.error(f"Error extracting flight details: {e}")
         return None
+
+def extract_restaurant_name(message):
+    # This function attempts to extract the restaurant name from the user's message
+    message_lower = message.lower()
+    trigger_phrases = ['tell me more about', 'more info on', 'information about', 'details on']
+    for phrase in trigger_phrases:
+        if phrase in message_lower:
+            name_part = message_lower.split(phrase)[1]
+            # Remove any leading 'in', 'at', 'located in', etc.
+            name_part = re.sub(r'\b(in|at|located in|in the city of)\b', '', name_part, flags=re.IGNORECASE).strip()
+            # Remove any location information at the end
+            name_part = re.sub(r'\bin.*', '', name_part, flags=re.IGNORECASE).strip()
+            # Capitalize each word
+            restaurant_name = ' '.join(word.capitalize() for word in name_part.split())
+            return restaurant_name.strip()
+    # If no trigger phrase is found, return the message as the restaurant name
+    return message.strip().title()

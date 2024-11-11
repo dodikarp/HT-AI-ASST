@@ -1,3 +1,5 @@
+// script.js
+
 var interval;
 let threadId = null;
 
@@ -43,9 +45,35 @@ function getUserLocation() {
   }
 }
 
-// Call getUserLocation when the page loads
+// Function to display messages in the chat
+function displayMessage(sender, message) {
+  const chat = document.getElementById("chat");
+  const messageDiv = document.createElement("div");
+  messageDiv.className = `bubble ${sender}`;
+  var converter = new showdown.Converter();
+  converter.addExtension(linkTargetBlankExtension);
+  const messageHtml = converter.makeHtml(message);
+  messageDiv.innerHTML = messageHtml;
+  chat.appendChild(messageDiv);
+  chat.scrollTop = chat.scrollHeight; // Scroll to bottom
+}
+
+// Function to fetch and display the welcome message
+function fetchWelcomeMessage() {
+  fetch('/welcome')
+    .then(response => response.json())
+    .then(data => {
+      displayMessage('left', data.bot_reply);
+    })
+    .catch(error => {
+      console.error('Error fetching welcome message:', error);
+    });
+}
+
+// Call getUserLocation and fetchWelcomeMessage when the page loads
 window.onload = function() {
   getUserLocation();
+  fetchWelcomeMessage();
 };
 
 function updateButtonState() {
@@ -71,8 +99,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // Add the user message to the chat
-    var chat = document.getElementById("chat");
-    chat.innerHTML += `<div class="bubble right">${message}</div>`;
+    displayMessage('right', message);
     messageInput.value = "";
     document.getElementById("sendMessage").disabled = true;
 
@@ -116,6 +143,7 @@ function runAssistant(threadId, message) {
   loaderDiv.className = "bubble left";
   loaderDiv.innerHTML = `<div class="loader"></div>`;
   chat.appendChild(loaderDiv);
+  chat.scrollTop = chat.scrollHeight; // Scroll to bottom
   sendMessageButton.disabled = true;
 
   // Prepare request body with location data
@@ -137,15 +165,13 @@ function runAssistant(threadId, message) {
     .then((response) => response.json())
     .then((data) => {
       console.log(data);
+      // Replace loader with the bot's response
       var converter = new showdown.Converter();
       converter.addExtension(linkTargetBlankExtension);
-      
-      // Use Markdown format for a more appealing reply
       const botReplyHtml = converter.makeHtml(data.bot_reply);
-
-      // Display formatted HTML
       loaderDiv.innerHTML = botReplyHtml;
       sendMessageButton.disabled = false;
+      chat.scrollTop = chat.scrollHeight; // Scroll to bottom
     })
     .catch((error) => {
       console.error("There has been a problem with your fetch operation:", error);
@@ -155,8 +181,7 @@ function runAssistant(threadId, message) {
 }
 
 function continueChat(message) {
-  var chat = document.getElementById("chat");
-  chat.innerHTML += `<div class="bubble right">${message}</div>`;
+  displayMessage('right', message);
 
   // Prepare request body with location data
   const requestBody = {
