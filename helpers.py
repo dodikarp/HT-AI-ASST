@@ -31,7 +31,9 @@ def extract_location(message):
         # Add prayer names to the non-location words
         'fajr', 'dhuhr', 'asr', 'maghrib', 'isha',
         # Add common misspellings or variations
-        'mahgrib', 'magrib', 'asar', 'dhuhr', 'zuhr', 'fajar', 'eisha', 'isha'
+        'mahgrib', 'magrib', 'asar', 'dhuhr', 'zuhr', 'fajar', 'eisha', 'isha',
+        # Add package-related words
+        'package', 'packages', 'travel', 'tour', 'trip', 'vacation'
     ]]
 
     # Define the matcher
@@ -187,3 +189,35 @@ def extract_restaurant_name(message):
             return restaurant_name.strip()
     # If no trigger phrase is found, return the message as the restaurant name
     return message.strip().title()
+
+def extract_keyword(message):
+    # Implement logic to extract keywords from the user's message
+    match = re.search(r'packages (?:to|for|in|about|on)\s+(.*)', message, re.IGNORECASE)
+    if match:
+        keyword = match.group(1)
+        return keyword.strip()
+    else:
+        # If no explicit keyword, attempt to extract location
+        locations = extract_location(message)
+        if locations:
+            return ' '.join(locations)
+        else:
+            # If still no keyword, return the entire message as a fallback
+            return message.strip()
+
+def extract_package_id(message):
+    # Use regex to extract numbers following 'id' or 'package id'
+    match = re.search(r'\b(?:id|package id)\s*(\d+)', message, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    else:
+        return None
+    
+
+def extract_package_name(message):
+    # Extract the package name after phrases like 'tell me more about'
+    match = re.search(r'(?:tell me more about|show me details of|i want to know about)\s+(.*)', message, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    else:
+        return message.strip()

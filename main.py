@@ -26,9 +26,13 @@ from helpers import (
     extract_location,
     detect_city_country,
     extract_flight_details,
-    extract_restaurant_name
+    extract_restaurant_name,
+    extract_keyword,
+    extract_package_id,
+    extract_package_name
 )
 from embeddings import search_all_docs
+from get_packages import get_all_packages, get_package_by_id, search_packages_by_keyword
 
 # Load environment variables
 load_dotenv()
@@ -121,17 +125,20 @@ Intent: restaurant_operating_hours_query
 User Message: "I'm looking for a halal restaurant in Bangkok to celebrate a special occasion."
 Intent: restaurant_special_request
 
-User Message: "What's the square root of a banana?"
-Intent: out_of_scope
-
-User Message: "Tell me a joke about flying elephants"
-Intent: out_of_scope
-
 User Message: "Can you provide inflight prayer times from SIN to DEL on 28-02-2019?"
 Intent: inflight_prayer_times
 
 User Message: "I need inflight prayer times for my flight from JFK to LHR."
 Intent: inflight_prayer_times
+
+User Message: "Can you show me travel packages to Bosnia?"
+Intent: package_query
+
+User Message: "Tell me more about package ID 420"
+Intent: package_detail_query
+
+User Message: "I'd like to know about the Bosnian Odyssey package."
+Intent: package_detail_query
 
 User Message: "{user_message}"
 Intent:"""
@@ -148,15 +155,18 @@ Intent:"""
     )
     intent = response.choices[0].message['content'].strip().lower()
 
+    # If previous intent was expecting a package detail
+    if previous_intent == 'package_query' and intent == 'package_detail_query':
+        return 'package_detail_query'
+
     # If previous intent was restaurant_detail_query and bot is expecting a restaurant name
-    if previous_intent == 'restaurant_detail_query':
+    if previous_intent == 'restaurant_detail_query' and intent == 'restaurant_detail_query':
         return 'restaurant_name_provided'
 
     return intent
 
 # Global dictionary to hold conversation states
 conversation_states = {}
-
 
 # Welcome endpoint
 @app.get("/welcome")
@@ -168,15 +178,13 @@ I'm **Farah**, your friendly assistant for Muslim-friendly travel. I'm here to h
 
 - **🍽️ Finding Halal Restaurants**
   - *Examples:*
-    - "Show me halal restaurants in Kuala Lumpur."
-    - "Are there any halal Thai restaurants in Bangkok?"
-    - "List 5 halal restaurants in Bedok, Singapore."
+    - "Halal restaurants near me"
 
 - **🕌 Locating Mosques**
   - *Examples:*
     - "Where is the nearest mosque?"
     - "List mosques near me."
-    - "Are there any mosques in Dubai?"
+    - "Mosques in Singapore"
 
 - **🕋 Providing Prayer Times**
   - *Examples:*
@@ -193,11 +201,15 @@ I'm **Farah**, your friendly assistant for Muslim-friendly travel. I'm here to h
   - *Example:*
     - "What is the Qibla direction from my location?"
 
+- **🧳 Travel Packages**
+  - *Examples:*
+    - "Can you show me travel packages to Bosnia?"
+    - "Tell me more about package ID 420."
+
 - **📝 Additional Information**
   - *Examples:*
     - "Tell me more about Muslim Restaurant in Bangkok."
-    - "Does Al-Najd Restaurant offer delivery services?"
-    - "What are the opening hours of Al-Salam Mosque?"
+    - "What is Qiyam"
 
 Feel free to ask me anything related to your Muslim-friendly travel needs. How may I assist you today?
 """
@@ -226,8 +238,114 @@ async def chat(request: ChatMessageRequest):
 
     try:
         if intent == 'greeting':
-            bot_reply = "👋 Assalamu Alaikum! I'm Farah, your assistant for Muslim-friendly travel. I can help with finding halal restaurants, mosques, prayer times, and inflight prayer times. How may I assist you today?"
+            bot_reply = "👋 Assalamu Alaikum! I'm Farah, your assistant for Muslim-friendly travel. I can help with finding halal restaurants, mosques, prayer times, inflight prayer times, and travel packages. How may I assist you today?"
             state['data'] = {}  # Reset state data
+
+        elif intent == 'package_query':
+            # Handle general package queries
+            keyword = extract_keyword(message)
+            if keyword:
+                packages = search_packages_by_keyword(keyword)
+                if packages:
+                    bot_reply = "Here are some packages that match your search:\n\n"
+                    for package in packages[:5]:  # Limit to 5 packages
+                        bot_reply += f"- **{package.get('name', 'N/A')}** (ID: {package.get('id', 'N/A')})\n"
+                    bot_reply += "\nPlease let me know if you'd like more details on any of these packages."
+                    # Store the list of package IDs in the conversation state
+                    state['data']['expected_packages'] = [pkg.get('id') for pkg in packages]
+                else:
+                    # If no packages match, provide available packages
+                    all_packages = get_all_packages()
+                    if all_packages:
+                        bot_reply = "Sorry, I couldn't find any packages matching your search. Here are some available packages:\n\n"
+                        for package in all_packages[:5]:
+                            bot_reply += f"- **{package.get('name', 'N/A')}** (ID: {package.get('id', 'N/A')})\n"
+                        bot_reply += "\nPlease let me know if any of these interest you."
+                    else:
+                        bot_reply = "Sorry, I couldn't retrieve the packages at this time."
+            else:
+                # If no keyword is extracted, list available packages
+                packages = get_all_packages()
+                if packages:
+                    bot_reply = "Here are some available packages:\n\n"
+                    for package in packages[:5]:
+                        bot_reply += f"- **{package.get('name', 'N/A')}** (ID: {package.get('id', 'N/A')})\n"
+                    bot_reply += "\nPlease let me know if you'd like more details on any of these packages."
+                    state['data']['expected_packages'] = [pkg.get('id') for pkg in packages]
+                else:
+                    bot_reply = "Sorry, I couldn't retrieve the packages at this time."
+            state['last_intent'] = intent
+
+
+
+
+
+
+        elif intent == 'package_detail_query':
+            # Handle package detail queries
+            package_id = extract_package_id(message)
+            if package_id:
+                package = get_package_by_id(package_id)
+                if package:
+                    name = package.get('name', 'N/A')
+                    description = package.get('description', 'No description available.')
+                    price_info = package.get('prices', [])
+                    if price_info:
+                        price = f"{price_info[0].get('currency', 'USD')} {price_info[0].get('price_standard', 'N/A')}"
+                    else:
+                        price = 'Price information not available.'
+
+                    bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nWould you like to book this package?"
+                    state['data']['expected_packages'] = None  # Clear expected packages
+                else:
+                    bot_reply = f"Sorry, I couldn't find a package with ID {package_id}."
+            else:
+                # If package ID is not provided, check if user selected from previous list
+                if 'expected_packages' in state['data'] and state['data']['expected_packages']:
+                    selected_package_name = extract_package_name(message).lower()
+                    # Try to match the selected package name with the expected packages
+                    matching_package_id = None
+                    for pkg_id in state['data']['expected_packages']:
+                        pkg = get_package_by_id(pkg_id)
+                        if pkg:
+                            package_name = pkg.get('name', '').lower()
+                            # Use fuzzy matching
+                            if selected_package_name == package_name:
+                                matching_package_id = pkg_id
+                                break
+                            elif selected_package_name in package_name or package_name in selected_package_name:
+                                matching_package_id = pkg_id
+                                break
+                            else:
+                                # Use difflib for approximate matching
+                                ratio = difflib.SequenceMatcher(None, selected_package_name, package_name).ratio()
+                                if ratio > 0.7:
+                                    matching_package_id = pkg_id
+                                    break
+                    if matching_package_id:
+                        package = get_package_by_id(matching_package_id)
+                        name = package.get('name', 'N/A')
+                        description = package.get('description', 'No description available.')
+                        price_info = package.get('prices', [])
+                        if price_info:
+                            price = f"{price_info[0].get('currency', 'USD')} {price_info[0].get('price_standard', 'N/A')}"
+                        else:
+                            price = 'Price information not available.'
+
+                        bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nWould you like to book this package?"
+                        state['data']['expected_packages'] = None  # Clear expected packages
+                    else:
+                        bot_reply = "Please specify the package ID or name from the list provided."
+                else:
+                    bot_reply = "Please specify the package ID or name of the package you'd like to know more about."
+            state['last_intent'] = intent
+
+
+
+
+
+
+
 
         elif intent == 'restaurant_detail_query':
             # Extract restaurant name from the message
@@ -249,6 +367,7 @@ async def chat(request: ChatMessageRequest):
                     bot_reply = restaurant_info
             else:
                 bot_reply = "Please specify the name of the restaurant you'd like to know more about."
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_name_provided' and state['last_intent'] == 'restaurant_detail_query' and state['data'].get('expected_restaurants'):
             # The user is specifying the restaurant name from previous prompt
@@ -266,27 +385,12 @@ async def chat(request: ChatMessageRequest):
                     bot_reply = f"Sorry, I couldn't find details for '{restaurant_name}'."
             else:
                 bot_reply = "Please specify a restaurant from the list provided."
-
-        elif intent == 'more_info':
-            # Fallback to restaurant_detail_query
-            restaurant_name = extract_restaurant_name(message)
-            if restaurant_name:
-                restaurant_info = get_restaurant_by_name(restaurant_name)
-                if restaurant_info:
-                    bot_reply = restaurant_info
-                    state['data']['expected_restaurants'] = None
-                else:
-                    # If multiple matches are found
-                    if isinstance(restaurant_info, str) and restaurant_info.startswith("I found multiple restaurants"):
-                        restaurant_list = re.findall(r"\*\*(.*?)\*\*", restaurant_info)
-                        state['data']['expected_restaurants'] = restaurant_list
-                    bot_reply = restaurant_info
-            else:
-                bot_reply = "Please specify the name of the restaurant you'd like to know more about."
+            state['last_intent'] = intent
 
         elif intent == 'qibla_direction':
             bot_reply = "You can find the Qibla direction here: [Qibla Direction](https://www.halaltrip.com/prayertimes/qibla-direction)."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'mosque_near_me':
             # Handle 'near me' mosque queries
@@ -304,6 +408,7 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please enable location services or provide your latitude and longitude to find mosques near you."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_near_me':
             # Handle 'near me' restaurant queries
@@ -329,6 +434,7 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please enable location services or provide your latitude and longitude to find halal restaurants near you."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_query':
             # Handle general restaurant queries
@@ -360,6 +466,7 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please specify the area or location for which you want the list of halal restaurants."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_cuisine_query':
             # Handle restaurant queries with cuisine
@@ -391,16 +498,19 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please specify the area or location for which you want the list of halal restaurants."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_service_query':
             # Handle inquiries about restaurant services (e.g., delivery)
             bot_reply = "As of my current information, there's no specific mention of delivery services. I recommend contacting the restaurant directly to inquire about delivery options."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_operating_hours_query':
             # Handle inquiries about operating hours
             bot_reply = "I'm sorry, but I don't have the current operating hours for that restaurant. I recommend visiting their official website or contacting them directly for the most up-to-date information."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'restaurant_special_request':
             # Handle special requests, e.g., for celebrations
@@ -424,7 +534,6 @@ async def chat(request: ChatMessageRequest):
                 city, country = detect_city_country(locations)
                 if city or country:
                     # Optionally, filter for restaurants suitable for special occasions
-                    # For now, we can just call get_restaurants
                     restaurants_info = get_restaurants(area=area, city=city, country=country, cuisine=cuisine)
                     bot_reply = f"Here are some recommendations for your special occasion:\n\n{restaurants_info}"
                 else:
@@ -434,6 +543,7 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please specify the area or location where you're looking to celebrate."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'prayer_time_query':
             # Handle prayer time queries
@@ -473,6 +583,7 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please specify the area or location for which you want the prayer times."
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'inflight_prayer_times':
             # Handle inflight prayer times queries
@@ -495,16 +606,19 @@ async def chat(request: ChatMessageRequest):
             else:
                 bot_reply = "Please provide your departure airport code, departure date and time, arrival airport code, and arrival date and time in the format:\n\n- Departure Airport Code (IATA):\n- Departure Date and Time (dd-mm-yyyy HH:MM):\n- Arrival Airport Code (IATA):\n- Arrival Date and Time (dd-mm-yyyy HH:MM)"
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         elif intent == 'out_of_scope':
             # Handle out-of-scope or ridiculous questions
-            bot_reply = "I'm sorry, but I can assist you with information on halal restaurants, mosques, prayer times, inflight prayer times, and travel-related queries. How may I help you today?"
+            bot_reply = "I'm sorry, but I can assist you with information on halal restaurants, mosques, prayer times, inflight prayer times, travel packages, and travel-related queries. How may I help you today?"
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
         else:
             # Default response using OpenAI GPT
             bot_reply = generate_response_with_gpt(message)
             state['data'] = {}  # Reset state data
+            state['last_intent'] = intent
 
     except Exception as e:
         logging.error(f"Error handling intent '{intent}': {e}")
