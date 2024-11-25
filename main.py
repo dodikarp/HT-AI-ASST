@@ -2,6 +2,8 @@
 
 import os
 import logging
+import re
+import difflib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -9,8 +11,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import openai
 from dotenv import load_dotenv
-import re
-import difflib
 
 # Import helper functions
 from get_prayer_times import get_prayer_times
@@ -29,10 +29,12 @@ from helpers import (
     extract_restaurant_name,
     extract_keyword,
     extract_package_id,
-    extract_package_name
+    extract_package_name,
+    extract_duration,
+    extract_special_request
 )
 from embeddings import search_all_docs
-from get_packages import get_all_packages, get_package_by_id, search_packages_by_keyword
+from get_packages import get_all_packages, get_package_by_id
 
 # Load environment variables
 load_dotenv()
@@ -140,11 +142,17 @@ Intent: package_detail_query
 User Message: "I'd like to know about the Bosnian Odyssey package."
 Intent: package_detail_query
 
+User Message: "Can you recommend travel packages to Turkey for 7 days?"
+Intent: package_query
+
+User Message: "Suggest me a 5-day trip travel package to Europe for my honeymoon."
+Intent: package_query
+
 User Message: "{user_message}"
 Intent:"""
 
     response = openai.ChatCompletion.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[
             {"role": "user", "content": prompt}
         ],
@@ -242,44 +250,65 @@ async def chat(request: ChatMessageRequest):
             state['data'] = {}  # Reset state data
 
         elif intent == 'package_query':
-            # Handle general package queries
-            keyword = extract_keyword(message)
-            if keyword:
-                packages = search_packages_by_keyword(keyword)
-                if packages:
-                    bot_reply = "Here are some packages that match your search:\n\n"
-                    for package in packages[:5]:  # Limit to 5 packages
-                        bot_reply += f"- **{package.get('name', 'N/A')}** (ID: {package.get('id', 'N/A')})\n"
-                    bot_reply += "\nPlease let me know if you'd like more details on any of these packages."
-                    # Store the list of package IDs in the conversation state
-                    state['data']['expected_packages'] = [pkg.get('id') for pkg in packages]
-                else:
-                    # If no packages match, provide available packages
-                    all_packages = get_all_packages()
-                    if all_packages:
-                        bot_reply = "Sorry, I couldn't find any packages matching your search. Here are some available packages:\n\n"
-                        for package in all_packages[:5]:
-                            bot_reply += f"- **{package.get('name', 'N/A')}** (ID: {package.get('id', 'N/A')})\n"
-                        bot_reply += "\nPlease let me know if any of these interest you."
-                    else:
-                        bot_reply = "Sorry, I couldn't retrieve the packages at this time."
+            # Handle general package queries without pre-filtering
+            packages = get_all_packages()
+            if packages:
+                # Prepare the data to include in the prompt
+                package_data = ""
+                total_tokens = 0
+                max_tokens = 6000  # Adjust based on GPT-4's token limit (leave room for response)
+
+                for package in packages:
+                    package_info = f"Name: {package.get('name', 'N/A')}\n"
+                    package_info += f"ID: {package.get('id', 'N/A')}\n"
+                    # Include location and other relevant details
+                    package_info += f"Country: {package.get('country', 'N/A')}\n"
+                    description = re.sub('<[^<]+?>', '', package.get('description', 'No description available.'))
+                    package_info += f"Description: {description}\n"
+                    package_info += f"Duration: {package.get('duration', 'N/A')} days\n"
+                    package_info += "\n"
+                    # Estimate tokens for this package
+                    estimated_tokens = len(package_info.split())
+                    if total_tokens + estimated_tokens > max_tokens:
+                        break  # Stop adding more packages to avoid exceeding token limit
+                    package_data += package_info
+                    total_tokens += estimated_tokens
+
+                # Construct the prompt
+                prompt = f"""
+You are a travel assistant helping a user find suitable travel packages.
+The following travel packages are available:
+
+{package_data}
+
+Based on the user's query: "{message}", recommend the most suitable travel packages to the user.
+Provide a brief summary of each recommended package, including its name, ID, duration, and a short description.
+"""
+
+                # Use OpenAI to generate the bot's reply
+                response = openai.ChatCompletion.create(
+                    model="gpt-4o",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful travel assistant."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    max_tokens=1500,  # Adjusted for response length
+                    temperature=0.7
+                )
+                bot_reply = response['choices'][0]['message']['content']
+                # Store the list of package IDs in the conversation state
+                # Extract package IDs from the response (assuming IDs are mentioned)
+                package_ids = re.findall(r'ID[:]? (\d+)', bot_reply)
+                state['data']['expected_packages'] = package_ids
             else:
-                # If no keyword is extracted, list available packages
-                packages = get_all_packages()
-                if packages:
-                    bot_reply = "Here are some available packages:\n\n"
-                    for package in packages[:5]:
-                        bot_reply += f"- **{package.get('name', 'N/A')}** (ID: {package.get('id', 'N/A')})\n"
-                    bot_reply += "\nPlease let me know if you'd like more details on any of these packages."
-                    state['data']['expected_packages'] = [pkg.get('id') for pkg in packages]
-                else:
-                    bot_reply = "Sorry, I couldn't retrieve the packages at this time."
+                bot_reply = "Sorry, I couldn't find any travel packages at the moment."
             state['last_intent'] = intent
-
-
-
-
-
 
         elif intent == 'package_detail_query':
             # Handle package detail queries
@@ -289,13 +318,15 @@ async def chat(request: ChatMessageRequest):
                 if package:
                     name = package.get('name', 'N/A')
                     description = package.get('description', 'No description available.')
+                    # Clean the description to remove HTML tags if any
+                    description = re.sub('<[^<]+?>', '', description)
                     price_info = package.get('prices', [])
                     if price_info:
                         price = f"{price_info[0].get('currency', 'USD')} {price_info[0].get('price_standard', 'N/A')}"
                     else:
                         price = 'Price information not available.'
 
-                    bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nWould you like to book this package?"
+                    bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nFor any inquiry please call us at [Contact Number]."
                     state['data']['expected_packages'] = None  # Clear expected packages
                 else:
                     bot_reply = f"Sorry, I couldn't find a package with ID {package_id}."
@@ -326,6 +357,8 @@ async def chat(request: ChatMessageRequest):
                         package = get_package_by_id(matching_package_id)
                         name = package.get('name', 'N/A')
                         description = package.get('description', 'No description available.')
+                        # Clean the description to remove HTML tags if any
+                        description = re.sub('<[^<]+?>', '', description)
                         price_info = package.get('prices', [])
                         if price_info:
                             price = f"{price_info[0].get('currency', 'USD')} {price_info[0].get('price_standard', 'N/A')}"
@@ -340,18 +373,10 @@ async def chat(request: ChatMessageRequest):
                     bot_reply = "Please specify the package ID or name of the package you'd like to know more about."
             state['last_intent'] = intent
 
-
-
-
-
-
-
-
         elif intent == 'restaurant_detail_query':
-            # Extract restaurant name from the message
+            # Handle restaurant detail queries
             restaurant_name = extract_restaurant_name(message)
             if restaurant_name:
-                # Get restaurant details by name
                 restaurant_info = get_restaurant_by_name(restaurant_name)
                 if restaurant_info:
                     bot_reply = restaurant_info
@@ -532,7 +557,7 @@ async def chat(request: ChatMessageRequest):
                 logging.info(f"Detected area: {area}")
 
                 city, country = detect_city_country(locations)
-                if city or country:
+                if city and country:
                     # Optionally, filter for restaurants suitable for special occasions
                     restaurants_info = get_restaurants(area=area, city=city, country=country, cuisine=cuisine)
                     bot_reply = f"Here are some recommendations for your special occasion:\n\n{restaurants_info}"
@@ -637,7 +662,7 @@ async def chat(request: ChatMessageRequest):
 def generate_response_with_gpt(message):
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -694,7 +719,7 @@ You are Farah, a helpful assistant for Muslim travelers on a Muslim-friendly web
 
         # Get a response from OpenAI based on the document
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=messages
         )
         bot_reply = response['choices'][0]['message']['content']

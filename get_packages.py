@@ -4,6 +4,7 @@ import requests
 import logging
 from dotenv import load_dotenv
 import os
+import re
 
 # Load environment variables
 load_dotenv()
@@ -58,15 +59,19 @@ def get_package_by_id(package_id):
         logging.error(f"Error fetching package with ID {package_id}: {e}")
         return None
 
-def search_packages_by_keyword(keyword):
+def search_packages_by_keyword(keyword, duration=None, special_request=None):
     packages = get_all_packages()
     if not packages:
         return None
     matching_packages = []
-    keyword_lower = keyword.lower()
+    keyword_lower = keyword.lower() if keyword else ''
     for package in packages:
         name = package.get('name', '').lower()
         description = package.get('description', '').lower()
-        if keyword_lower in name or keyword_lower in description:
-            matching_packages.append(package)
+        package_duration = package.get('duration', '')
+        # Clean the description to remove HTML tags
+        description = re.sub('<[^<]+?>', '', description)
+        if ((keyword_lower in name or keyword_lower in description) or (special_request and special_request in description)):
+            if duration is None or package_duration == str(duration):
+                matching_packages.append(package)
     return matching_packages

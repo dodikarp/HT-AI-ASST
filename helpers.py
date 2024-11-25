@@ -190,7 +190,25 @@ def extract_restaurant_name(message):
     # If no trigger phrase is found, return the message as the restaurant name
     return message.strip().title()
 
+def extract_duration(message):
+    # Extract duration in days or nights from the message
+    match = re.search(r'(\d+)\s*(?:day|days|night|nights)', message, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    else:
+        return None
+
+def extract_special_request(message):
+    # Extract special requests like 'honeymoon', 'family', 'adventure', etc.
+    special_requests_keywords = ['honeymoon', 'family', 'adventure', 'luxury', 'budget', 'romantic', 'solo', 'group']
+    for keyword in special_requests_keywords:
+        if keyword.lower() in message.lower():
+            return keyword.lower()
+    return None
+
 def extract_keyword(message):
+    # Remove duration phrases from the message
+    message = re.sub(r'\d+\s*(?:day|days|night|nights)', '', message, flags=re.IGNORECASE)
     # Implement logic to extract keywords from the user's message
     match = re.search(r'packages (?:to|for|in|about|on)\s+(.*)', message, re.IGNORECASE)
     if match:
@@ -212,7 +230,6 @@ def extract_package_id(message):
         return match.group(1)
     else:
         return None
-    
 
 def extract_package_name(message):
     # Extract the package name after phrases like 'tell me more about'
