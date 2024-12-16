@@ -31,10 +31,15 @@ from helpers import (
     extract_package_id,
     extract_package_name,
     extract_duration,
-    extract_special_request
+    extract_special_request,
+    extract_date
 )
 from embeddings import search_all_docs
 from get_packages import get_all_packages, get_package_by_id
+
+# Import LangChain components
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
 # Load environment variables
 load_dotenv()
@@ -65,6 +70,9 @@ async def serve_html():
 
 # Set OpenAI API key
 openai.api_key = os.getenv('OPENAI_API_KEY')
+
+# Global dictionary to hold conversation states
+conversation_states = {}
 
 # Create a request model for chat messages
 class ChatMessageRequest(BaseModel):
@@ -137,16 +145,23 @@ User Message: "Can you show me travel packages to Bosnia?"
 Intent: package_query
 
 User Message: "Tell me more about package ID 420"
-Intent: package_detail_query
+Intent: package_query
 
 User Message: "I'd like to know about the Bosnian Odyssey package."
-Intent: package_detail_query
+Intent: package_query
 
 User Message: "Can you recommend travel packages to Turkey for 7 days?"
 Intent: package_query
 
 User Message: "Suggest me a 5-day trip travel package to Europe for my honeymoon."
 Intent: package_query
+
+User Message: "Does the time for Zuhr change during Ramadan in Jakarta?."
+Intent: general_question
+
+User Message: "does prayer time changes during ramadan?."
+Intent: general_question
+
 
 User Message: "{user_message}"
 Intent:"""
@@ -156,7 +171,7 @@ Intent:"""
         messages=[
             {"role": "user", "content": prompt}
         ],
-        max_tokens=10,
+        max_tokens=8000,
         n=1,
         stop=["\n"],
         temperature=0
@@ -172,9 +187,6 @@ Intent:"""
         return 'restaurant_name_provided'
 
     return intent
-
-# Global dictionary to hold conversation states
-conversation_states = {}
 
 # Welcome endpoint
 @app.get("/welcome")
@@ -236,10 +248,15 @@ async def chat(request: ChatMessageRequest):
         return {"bot_reply": bot_reply, "threadId": request.threadId}
 
     # Get or initialize the conversation state for this threadId
-    state = conversation_states.get(request.threadId, {'last_intent': None, 'data': {}})
+    if request.threadId not in conversation_states:
+        conversation_states[request.threadId] = {'last_intent': None, 'data': {}, 'memory': ConversationBufferMemory()}
+    state = conversation_states[request.threadId]
+
+    # Get the previous intent from the conversation state
+    previous_intent = state['last_intent']
 
     # Classify the intent using GPT-4
-    intent = classify_intent_with_gpt(message, previous_intent=state['last_intent'])
+    intent = classify_intent_with_gpt(message, previous_intent=previous_intent)
     logging.info(f"Classified intent: {intent}")
 
     bot_reply = "I'm sorry, I didn't quite understand that. Could you please rephrase your request?"
@@ -256,7 +273,7 @@ async def chat(request: ChatMessageRequest):
                 # Prepare the data to include in the prompt
                 package_data = ""
                 total_tokens = 0
-                max_tokens = 6000  # Adjust based on GPT-4's token limit (leave room for response)
+                max_tokens = 8000  # Adjust based on GPT-4's token limit (leave room for response)
 
                 for package in packages:
                     package_info = f"Name: {package.get('name', 'N/A')}\n"
@@ -281,9 +298,12 @@ The following travel packages are available:
 
 {package_data}
 
-Based on the user's query: "{message}", recommend the most suitable travel packages to the user.
-Provide a brief summary of each recommended package, including its name, ID, duration, and a short description.
+Based on the user's query: "{message}", recommend the most suitable travel packages to the user. if the user is not asking for recommendation, answer the user's query directly. if the user asks for how many travel packages they have, answer with how many unique IDs you see.
+Provide a brief summary of each recommended package, including its name, ID, duration, and a short description, prices for the different classes(standard, premium, luxury). do include halaltrip's contact number for any inquiries(+65 9729 4638). if the user asks for more details, provide the full description of the package instead of giving/recommending other packages. if user asks for a specific package, provide the full details of that package only. do include the crescentrating rating too(bronze, silver, gold).if the user asks for the whole list of package, provide them some and also add a hyperlink to https://www.halaltrip.com/halal-holiday-packages/ (always add this at the end of each answer).
 """
+
+                # Log the prompt for debugging
+                logging.info(f"Prompt sent to GPT-4: {prompt}")
 
                 # Use OpenAI to generate the bot's reply
                 response = openai.ChatCompletion.create(
@@ -291,14 +311,14 @@ Provide a brief summary of each recommended package, including its name, ID, dur
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a helpful travel assistant."
+                            "content": "You are a helpful travel assistant. make sure you answer concisely and appealing to the users, well formatted"
                         },
                         {
                             "role": "user",
                             "content": prompt
                         }
                     ],
-                    max_tokens=1500,  # Adjusted for response length
+                    max_tokens=8000,  # Adjusted for response length
                     temperature=0.7
                 )
                 bot_reply = response['choices'][0]['message']['content']
@@ -326,7 +346,7 @@ Provide a brief summary of each recommended package, including its name, ID, dur
                     else:
                         price = 'Price information not available.'
 
-                    bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nFor any inquiry please call us at [Contact Number]."
+                    bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nFor any inquiry please call us at +65 9729 4638."
                     state['data']['expected_packages'] = None  # Clear expected packages
                 else:
                     bot_reply = f"Sorry, I couldn't find a package with ID {package_id}."
@@ -368,9 +388,9 @@ Provide a brief summary of each recommended package, including its name, ID, dur
                         bot_reply = f"**{name}**\n\n{description}\n\n**Price:** {price}\n\nWould you like to book this package?"
                         state['data']['expected_packages'] = None  # Clear expected packages
                     else:
-                        bot_reply = "Please specify the package ID or name from the list provided."
+                        bot_reply = "Please specify the package ID from the list provided."
                 else:
-                    bot_reply = "Please specify the package ID or name of the package you'd like to know more about."
+                    bot_reply = "Please specify the package ID of the package you'd like to know more about."
             state['last_intent'] = intent
 
         elif intent == 'restaurant_detail_query':
@@ -571,36 +591,45 @@ Provide a brief summary of each recommended package, including its name, ID, dur
             state['last_intent'] = intent
 
         elif intent == 'prayer_time_query':
-            # Handle prayer time queries
             message_lower = message.lower()
 
             # List of specific prayers
-            specific_prayers = ["fajr", "dhuhr", "asr", "maghrib", "isha"]
+            specific_prayers = ["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"]
             specific_prayer = None
 
             # Implement fuzzy matching for prayer names
             words = message_lower.split()
             for word in words:
-                close_matches = difflib.get_close_matches(word, specific_prayers, n=1, cutoff=0.7)
+                close_matches = difflib.get_close_matches(word, specific_prayers, n=1, cutoff=0.8)
                 if close_matches:
                     specific_prayer = close_matches[0]
                     # Remove the prayer name from the message
                     message_lower = message_lower.replace(word, '')
                     break
 
+            # Extract date from the message
+            date, message_without_date = extract_date(message_lower)
+            if date:
+                logging.info(f"Extracted date: {date}")
+                message_lower = message_without_date  # Update the message to exclude the date
+            else:
+                date = None  # Will default to today's date in get_prayer_times
+
             # Extract locations from the modified message
             locations = extract_location(message_lower)
             logging.info(f"Extracted locations: {locations}")
 
             if locations:
+                # Combine locations to form area
                 area = ' '.join(locations)
                 logging.info(f"Detected area: {area}")
 
                 city, country = detect_city_country([area])
                 if city and country:
-                    prayer_times = get_prayer_times(city=city, country=country, specific_prayer=specific_prayer)
+                    prayer_times = get_prayer_times(city=city, country=country, specific_prayer=specific_prayer, date=date)
                     if specific_prayer:
-                        bot_reply = f"The time for **{specific_prayer.capitalize()}** prayer in {city}, {country} is:\n\n{prayer_times}"
+                        date_str = date.strftime('%Y-%m-%d') if date else 'today'
+                        bot_reply = f"🕌The time for **{specific_prayer.capitalize()}** prayer in {city}, {country} on {date_str} is:\n\n⏰**{specific_prayer.capitalize()}**: {prayer_times}"
                     else:
                         bot_reply = prayer_times
                 else:
@@ -641,7 +670,18 @@ Provide a brief summary of each recommended package, including its name, ID, dur
 
         else:
             # Default response using OpenAI GPT
-            bot_reply = generate_response_with_gpt(message)
+            # Get the conversation history
+            conversation_history = []
+            chat_messages = state['memory'].chat_memory.messages
+            for msg in chat_messages:
+                if isinstance(msg, HumanMessage):
+                    role = 'user'
+                elif isinstance(msg, AIMessage):
+                    role = 'assistant'
+                else:
+                    role = 'user'  # Default to 'user' role
+                conversation_history.append({"role": role, "content": msg.content})
+            bot_reply = generate_response_with_gpt(message, conversation_history)
             state['data'] = {}  # Reset state data
             state['last_intent'] = intent
 
@@ -656,22 +696,30 @@ Provide a brief summary of each recommended package, including its name, ID, dur
     # Save the updated state
     conversation_states[request.threadId] = state
 
+    # Save the conversation
+    state['memory'].save_context({"input": message}, {"output": bot_reply})
+
     return {"bot_reply": bot_reply, "threadId": request.threadId}
 
-# Function to generate response with GPT-4
-def generate_response_with_gpt(message):
+# Function to generate response with GPT-4, including conversation history
+def generate_response_with_gpt(message, conversation_history):
     try:
+        messages = [
+            {
+                "role": "system",
+                "content": """
+You are Farah, a helpful, friendly, and informative assistant for Muslim travelers on a Muslim-friendly website (Halaltrip.com). When providing information about specific places like mosques or restaurants, include historical context, specialties, unique features, and any details that might interest travelers. When answering questions, I want you to sound confident. and also, ensure that its concise and appealing for users to read. it should be well formatted
+"""
+            }
+        ]
+        # Add conversation history
+        messages.extend(conversation_history)
+        # Add the current user message
+        messages.append({"role": "user", "content": message})
+
         response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """
-You are Farah, a helpful, friendly, and informative assistant for Muslim travelers on a Muslim-friendly website (Halaltrip.com). When providing information about specific places like mosques or restaurants, include historical context, specialties, unique features, and any details that might interest travelers.
-"""
-                },
-                {"role": "user", "content": message}
-            ]
+            messages=messages
         )
         bot_reply = response['choices'][0]['message']['content']
         return bot_reply
@@ -697,33 +745,54 @@ async def chat_with_file(request: ChatMessageRequest):
         # If document content is found, log and use it
         logging.info(f"Information retrieved from document: {relevant_content}")
 
+        # Get or initialize the conversation state for this threadId
+        if request.threadId not in conversation_states:
+            conversation_states[request.threadId] = {'last_intent': None, 'data': {}, 'memory': ConversationBufferMemory()}
+        state = conversation_states[request.threadId]
+
+        # Get the conversation history
+        conversation_history = []
+        chat_messages = state['memory'].chat_memory.messages
+        for msg in chat_messages:
+            if isinstance(msg, HumanMessage):
+                role = 'user'
+            elif isinstance(msg, AIMessage):
+                role = 'assistant'
+            else:
+                role = 'user'  # Default to 'user' role
+            conversation_history.append({"role": role, "content": msg.content})
+
         # Send the document content along with the query to OpenAI to craft a response
         messages = [
             {
                 "role": "system",
                 "content": """
-You are Farah, a helpful assistant for Muslim travelers on a Muslim-friendly website (Halaltrip.com). Use the provided document as a reference for your response. Cite information directly from the document, and mention that it comes from the provided content. Do not include any information that is not in the document. Use the provided document to answer the user's question as accurately as possible. Answer in a concise manner, well formatted, and make it look appealing. Feel free to use emojis.
+You are Farah, a helpful assistant for Muslim travelers on a Muslim-friendly website (Halaltrip.com). Use the provided document as a reference for your response. Cite information directly from the document, and mention that it comes from the provided content. Do not include any information that is not in the document. Use the provided document to answer the user's question as accurately as possible. Answer in a concise manner, well formatted, and make it look appealing. Feel free to use emojis. When answering questions, I want you to sound confident.
 """
             },
             {
                 "role": "user",
                 "content": f"The following document is provided as reference:\n\n{relevant_content}"
-            },
-            {
-                "role": "user",
-                "content": f"Based on this document, please answer the following question:\n\n{request.message}"
             }
         ]
+        # Add conversation history
+        messages.extend(conversation_history)
+        # Add the current user message
+        messages.append({"role": "user", "content": f"Based on this document, please answer the following question:\n\n{request.message}"})
 
         logging.info(f"Messages sent to OpenAI API: {messages}")
 
         # Get a response from OpenAI based on the document
         response = openai.ChatCompletion.create(
-            model="gpt-4o",
+            model=" gpt-4o",
             messages=messages
         )
         bot_reply = response['choices'][0]['message']['content']
         logging.info("Response generated using document content.")
+
+        # Save the conversation
+        state['memory'].save_context({"input": request.message}, {"output": bot_reply})
+
         return {"bot_reply": bot_reply, "threadId": request.threadId}
 
     else:

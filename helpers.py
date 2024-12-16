@@ -8,6 +8,8 @@ from spacy.matcher import Matcher
 from dotenv import load_dotenv
 import docx  # Library to handle .docx files
 import re
+import dateparser
+
 
 # Load environment variables
 load_dotenv()
@@ -18,9 +20,24 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 # Load the NLP model for English
 nlp = spacy.load("en_core_web_sm")
 
+def extract_date(message):
+    import dateparser
+    from dateparser.search import search_dates
+
+    # Search for dates in the message
+    result = search_dates(message, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
+    if result:
+        # Get the first date found
+        date_str_in_msg, date = result[0]
+        # Remove the date string from the message
+        message_without_date = message.replace(date_str_in_msg, '')
+        return date, message_without_date
+    else:
+        return None, message
+
+
 def extract_location(message):
-    # Normalize the message by capitalizing it
-    message = message.title()
+    # Process the message with spaCy NLP model
     doc = nlp(message)
     locations = []
     non_location_words = [word.lower() for word in [
@@ -33,25 +50,15 @@ def extract_location(message):
         # Add common misspellings or variations
         'mahgrib', 'magrib', 'asar', 'dhuhr', 'zuhr', 'fajar', 'eisha', 'isha',
         # Add package-related words
-        'package', 'packages', 'travel', 'tour', 'trip', 'vacation'
+        'package', 'packages', 'travel', 'tour', 'trip', 'vacation',
+        # Add other non-location words that might be misidentified
+        'ramadan', 'change'
     ]]
-
-    # Define the matcher
-    matcher = Matcher(nlp.vocab)
-    pattern = [{'POS': 'PROPN'}]
-    matcher.add("ProperNoun", [pattern])
-    matches = matcher(doc)
-
-    # Extract matched proper nouns
-    for match_id, start, end in matches:
-        span = doc[start:end]
-        if span.text.lower() not in non_location_words and not span.text.isdigit():
-            locations.append(span.text)
 
     # Include entities recognized by NER
     for ent in doc.ents:
-        if ent.label_ in ["GPE", "LOC", "FAC", "ORG"]:
-            if ent.text.lower() not in non_location_words and ent.text not in locations and not ent.text.isdigit():
+        if ent.label_ in ["GPE", "LOC", "FAC"]:
+            if ent.text.lower() not in non_location_words and not ent.text.isdigit():
                 locations.append(ent.text)
 
     return locations

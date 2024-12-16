@@ -1,11 +1,13 @@
 // script.js
 
 var interval;
-let threadId = null;
+let threadId = Date.now().toString(); // Generates a new threadId each time the page loads
 
 // Variables to store user's location
 let userLatitude = null;
 let userLongitude = null;
+
+
 
 var linkTargetBlankExtension = function () {
   return [

@@ -3,5 +3,7 @@ pip install fastapi
 pip install uvicorn
 python -m spacy download en_core_web_sm
 pip install python-docx
+pip install dateparser
+
 
 #  in the same directory, paste in the terminal: uvicorn main:app --reload
